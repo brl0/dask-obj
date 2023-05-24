@@ -1,9 +1,12 @@
 """Dask object core module."""
 
 from collections import Counter
-from operator import attrgetter, methodcaller
+from operator import attrgetter, itemgetter, methodcaller
 
 import dask.bag as db
+from dask import compute, persist
+from dask.delayed import delayed
+from dask.distributed import as_completed, get_client
 
 
 def summer(value, *args):
@@ -102,3 +105,66 @@ class DaskObjects:
 
     def counts(self, split_every=None):
         return self.items.reduction(counter, sum_counts, split_every=split_every).compute()
+
+
+@delayed
+def noop(arg):
+    return arg
+
+
+class DaskDelayedObjects:
+    def __init__(self, items, **kwargs) -> None:
+        self.kwargs = kwargs
+        self.items = list(map(noop, items))
+        try:
+            client = get_client()
+        except ValueError:
+            client = None
+        self.client = client
+
+    @property
+    def _map(self):
+        if self.client is None:
+            return map
+        return self.client.map
+
+    def _make_new(self, items):
+        return type(self)(items, **self.kwargs)
+
+    def map(self, func, *args, compute=False, **kwargs):
+        f = toolz.curry(delayed(func), *args, **kwargs)
+        out = self._make_new(self._map(f, self.items))
+        if compute:
+            out = out.compute()
+        return out
+
+    def compute(self, *args, **kwargs):
+        return compute(self.items, *args, **kwargs)
+
+    def persist(self, *args, **kwargs):
+        return self._make_new(persist(self.items, *args, **kwargs))
+
+    def __getattr__(self, attr):
+        return self.map(attrgetter(attr))
+
+    def __getitem__(self, item):
+        return self.map(itemgetter(item))
+
+    def __call__(self, *args, **kwargs):
+        return self.map(lambda f: f(*args, **kwargs))
+
+    def call(self, method, *args, **kwargs):
+        return self.map(methodcaller(method, *args, **kwargs))
+
+    def __iter__(self):
+        for _ in as_completed(self.items):
+            yield _.result()
+
+    def __repr__(self):
+        return f"{type(self)}({repr(self.items)})"
+
+    def __str__(self):
+        return f"{type(self)}({str(self.items)})"
+
+    def __len__(self):
+        return len(self.items)
