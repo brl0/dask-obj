@@ -4,8 +4,9 @@ from collections import Counter
 from operator import attrgetter, itemgetter, methodcaller
 
 import dask.bag as db
+import toolz
 from dask import compute, persist
-from dask.delayed import delayed
+from dask.delayed import Delayed, delayed
 from dask.distributed import as_completed, get_client
 
 
@@ -107,7 +108,7 @@ class DaskObjects:
         return self.items.reduction(counter, sum_counts, split_every=split_every).compute()
 
 
-@delayed
+# @delayed
 def noop(arg):
     return arg
 
@@ -115,7 +116,11 @@ def noop(arg):
 class DaskDelayedObjects:
     def __init__(self, items, **kwargs) -> None:
         self.kwargs = kwargs
-        self.items = list(map(noop, items))
+        first, items = toolz.peek(items)
+        _noop = noop
+        if not isinstance(first, Delayed):
+            _noop = delayed(noop)
+        self.items = list(map(_noop, items))
         try:
             client = get_client()
         except ValueError:
@@ -139,7 +144,10 @@ class DaskDelayedObjects:
         return out
 
     def compute(self, *args, **kwargs):
-        return compute(self.items, *args, **kwargs)
+        out = compute(self.items, *args, **kwargs)
+        if len(out) == 1:
+            out = out[0]
+        return out
 
     def persist(self, *args, **kwargs):
         return self._make_new(persist(self.items, *args, **kwargs))
@@ -168,3 +176,45 @@ class DaskDelayedObjects:
 
     def __len__(self):
         return len(self.items)
+
+    @staticmethod
+    def make_op(name):
+        def func(self, *args, **kwargs):
+            return self.map(methodcaller(name, *args, **kwargs))
+        func.__name__ = name
+        return func
+
+    __add__ = make_op("__add__")
+    __sub__ = make_op("__sub__")
+    __mul__ = make_op("__mul__")
+    __truediv__ = make_op("__truediv__")
+    __floordiv__ = make_op("__floordiv__")
+    __mod__ = make_op("__mod__")
+    __pow__ = make_op("__pow__")
+    __lshift__ = make_op("__lshift__")
+    __rshift__ = make_op("__rshift__")
+    __and__ = make_op("__and__")
+    __xor__ = make_op("__xor__")
+    __or__ = make_op("__or__")
+    __lt__ = make_op("__lt__")
+    __le__ = make_op("__le__")
+    __eq__ = make_op("__eq__")
+    __ne__ = make_op("__ne__")
+    __gt__ = make_op("__gt__")
+    __ge__ = make_op("__ge__")
+    __radd__ = make_op("__radd__")
+    __rsub__ = make_op("__rsub__")
+    __rmul__ = make_op("__rmul__")
+    __rtruediv__ = make_op("__rtruediv__")
+    __rfloordiv__ = make_op("__rfloordiv__")
+    __rmod__ = make_op("__rmod__")
+    __rpow__ = make_op("__rpow__")
+    __rlshift__ = make_op("__rlshift__")
+    __rrshift__ = make_op("__rrshift__")
+    __rand__ = make_op("__rand__")
+    __rxor__ = make_op("__rxor__")
+    __ror__ = make_op("__ror__")
+    __neg__ = make_op("__neg__")
+    __pos__ = make_op("__pos__")
+    __abs__ = make_op("__abs__")
+    __invert__ = make_op("__invert__")

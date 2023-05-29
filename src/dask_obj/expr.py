@@ -288,6 +288,8 @@ class Expr:
         self.kw__ = kw
 
     def __getattribute__(self, name):
+        if name.startswith("__dask_"):
+            raise AttributeError(name)
         if name.endswith("__") and not name.startswith("__") or \
             hasattr_(type(self), name):
             return _getattr(self, name)
