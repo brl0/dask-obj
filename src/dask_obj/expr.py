@@ -1,6 +1,7 @@
 """Expression module."""
 
 import logging
+from collections import deque
 from operator import methodcaller
 from typing import Any, Callable
 
@@ -8,6 +9,8 @@ import toolz
 from boltons.funcutils import format_invocation
 from boltons.typeutils import make_sentinel
 from toolz import flip
+
+from .utils import get_name
 
 
 _getattr = object.__getattribute__
@@ -40,13 +43,6 @@ def hasattr_(obj, name):
 
 
 class OldExpr:
-    """Expression base class.
-
-    Expression base class will be used to record method calls and their arguments
-    in order to be able to replay them later on.
-
-    """
-
     def __init__(self, name, obj, *args, expr=None, **kwargs):
         self.name = name
         if isinstance(obj, type) or callable(obj):
@@ -232,30 +228,6 @@ class OldExpr:
     __invert__ = op("__invert__")
 
 
-def repr_str(obj):
-    if isinstance(obj, str):
-        return obj
-    return repr(obj)
-
-
-def print_result(func):
-    def wrapper(*args, **kw):
-        result = func(*args, **kw)
-        print(f"{args[0].obj__}, {args[0].expr__}")
-        print(f"{result=}")
-        return result
-    return wrapper
-
-
-def get_name(obj, otherwise: Callable = repr_str):
-    if isinstance(obj, str):
-        return obj
-    for attr in ("__qualname__", "__name__", "name"):
-        if hasattr(obj, attr):
-            return getattr(obj, attr)
-    return otherwise(obj)
-
-
 class Expr:
     """Expression base class.
 
@@ -313,7 +285,7 @@ class Expr:
             return f"{type(self).__name__}({expr})"
         if expr is None:
             if isinstance(obj, str):
-                return obj
+                return f"'{obj}'"
             return f"({repr(obj)})"
         args = self.args__
         kw = self.kw__
@@ -435,25 +407,24 @@ class Expr:
         return caller(prev)
 
 
-def get_root_value(expr):
-    while expr.expr__ is not None:
-        expr = expr.expr__
-    return expr.obj__
-
-
 def get_root_expr(expr):
     while expr.expr__ is not None:
         expr = expr.expr__
     return expr
 
 
+def get_root_value(expr):
+    return get_root_expr(expr).obj__
+
+
 def reduce_expr(expr):
-    exprs = deque()
+    exprs = []
     while expr.expr__ is not None:
-        exprs.insert(0, (expr.obj__, expr.args__, expr.kw__))
+        exprs.append((expr.obj__, expr.args__, expr.kw__))
         expr = expr.expr__
-    exprs.insert(0, (expr.obj__, expr.args__, expr.kw__))
-    return tuple(exprs)
+    exprs.append((expr.obj__, expr.args__, expr.kw__))
+    return tuple(reversed(exprs))
+
 
 def expr_maker(exprs, root=None):
     expr = root

@@ -1,6 +1,7 @@
 """Dask object core module."""
 
 from collections import Counter
+from functools import wraps
 from operator import attrgetter, itemgetter, methodcaller
 
 import dask.bag as db
@@ -8,6 +9,8 @@ import toolz
 from dask import compute, persist
 from dask.delayed import Delayed, delayed
 from dask.distributed import as_completed, get_client
+
+from .utils import get_name
 
 
 def summer(value, *args):
@@ -113,12 +116,16 @@ def noop(arg):
     return arg
 
 
+def is_delayed(obj):
+    return isinstance(obj, Delayed)
+
+
 class DaskDelayedObjects:
     def __init__(self, items, **kwargs) -> None:
         self.kwargs = kwargs
         first, items = toolz.peek(items)
         _noop = noop
-        if not isinstance(first, Delayed):
+        if not is_delayed(first):
             _noop = delayed(noop)
         self.items = list(map(_noop, items))
         try:
@@ -137,8 +144,15 @@ class DaskDelayedObjects:
         return type(self)(items, **self.kwargs)
 
     def map(self, func, *args, compute=False, **kwargs):
-        f = toolz.curry(delayed(func), *args, **kwargs)
-        out = self._make_new(self._map(f, self.items))
+
+        @wraps(func)
+        def f(x):
+            return func(x, *args, **kwargs)
+
+        f.__name__ = get_name(func)
+        if not is_delayed(func):
+            f = delayed(f)
+        out = self._make_new(map(f, self.items))
         if compute:
             out = out.compute()
         return out
@@ -150,7 +164,10 @@ class DaskDelayedObjects:
         return out
 
     def persist(self, *args, **kwargs):
-        return self._make_new(persist(self.items, *args, **kwargs))
+        persisted = persist(self.items, *args, **kwargs)
+        if len(persisted) == 1:
+            persisted = persisted[0]
+        return self._make_new(persisted)
 
     def __getattr__(self, attr):
         return self.map(attrgetter(attr))
